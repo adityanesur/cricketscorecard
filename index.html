@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.5, user-scalable=yes, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Premier Gully · DRS Scorekeeper | Movable Live Preview + Replay</title>
     <meta name="description" content="Premier Gully - Advanced gully cricket run counter with Undo, Edit, Innings History, plus DRS recording & movable live preview.">
     <style>
@@ -11,6 +11,11 @@
             padding: 0;
             box-sizing: border-box;
             font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        /* Prevent page zoom on double-tap for all interactive elements */
+        button, .premium-btn, .action-btn, .ctrl-icon, .frame-btn, .ball-badge, .delete-innings, .close-modal, .close-drs {
+            touch-action: manipulation;
         }
 
         body {
@@ -204,7 +209,17 @@
             font-size: 0.85rem;
         }
 
-        /* Innings history styling (matches original) */
+        /* Innings history styling (matches original) - FIXED SCROLLING */
+        .modal-card {
+            max-height: 85vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        #inningsList {
+            max-height: 65vh;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
         .innings-card {
             background: #1b3140;
             border-radius: 36px;
@@ -305,20 +320,23 @@
             position: fixed;
             top: 0; left: 0;
             width: 100%; height: 100%;
-            background: rgba(0, 5, 12, 0.75);
+            background: rgba(0, 5, 12, 0.85);
             backdrop-filter: blur(12px);
             align-items: center;
             justify-content: center;
             z-index: 2000;
+            padding: 1rem;
         }
         .modal-card, .popup-card {
             background: #172b38;
             border-radius: 48px;
-            padding: 1.8rem;
-            max-width: 90%;
-            width: 400px;
+            padding: 1.5rem;
+            max-width: 95%;
+            width: 500px;
             border: 1px solid #6c9fd1;
             text-align: center;
+            max-height: 90vh;
+            overflow-y: auto;
         }
         .popup-card h2 {
             font-weight: 400;
@@ -510,7 +528,7 @@
             cursor: grab;
             user-select: none;
             transition: none;
-            touch-action: none; /* improve touch dragging */
+            touch-action: none;
         }
         .floating-preview:active {
             cursor: grabbing;
@@ -535,7 +553,6 @@
             color: #0ff;
             pointer-events: none;
         }
-        /* Drag handle hint */
         .floating-preview::after {
             content: "⋮⋮";
             position: absolute;
@@ -544,7 +561,6 @@
             color: rgba(255,255,255,0.6);
             font-size: 12px;
             pointer-events: none;
-            text-shadow: 0 0 2px black;
         }
         @media (max-width: 600px) {
             .floating-preview { width: 120px; bottom: 10px; right: 10px; }
@@ -627,7 +643,7 @@
 
 <!-- Floating Live Preview (hidden by default, movable) -->
 <div id="floatingPreview" class="floating-preview" style="display: none;">
-    <div class="preview-label-badge">LIVE</div>
+    <div class="preview-label-badge">📹 LIVE · drag</div>
     <video id="livePreviewVideo" autoplay playsinline muted></video>
 </div>
 
@@ -666,21 +682,42 @@
 </div>
 
 <!-- Innings modal & popup -->
-<div id="scoreModal" class="modal"><div class="modal-card"><div style="display:flex; justify-content:space-between;"><span style="font-size:1.3rem;">📜 INNINGS HISTORY</span><button class="close-modal" id="closeModalBtn">&times;</button></div><div id="inningsList"></div></div></div>
+<div id="scoreModal" class="modal"><div class="modal-card"><div style="display:flex; justify-content:space-between; margin-bottom:1rem;"><span style="font-size:1.3rem;">📜 INNINGS HISTORY</span><button class="close-modal" id="closeModalBtn">&times;</button></div><div id="inningsList" style="overflow-y: auto; max-height: 65vh;"></div></div></div>
 <div id="runPopup" class="popup-modal"><div class="popup-card"><h2 id="popupTitle">select value</h2><div id="popupButtonContainer" class="popup-buttons"></div><button class="popup-btn" id="popupCancel">cancel</button></div></div>
 <div id="animationContainer" class="animation-overlay"></div>
 
 <script>
     (function(){
-        // ---------- SCORECARD LOGIC (full, identical to original) ----------
+        // ---------- SCORECARD LOGIC ----------
         let inningsList = [], currentInningsIndex = -1, currentOverBalls = [], currentBallCount = 0, totalRuns = 0, undoStack = [];
+        
+        // ---------- PREVENT DATA LOSS ON REFRESH ----------
+        window.addEventListener('beforeunload', (e) => {
+            if (inningsList.length > 0 || totalRuns > 0 || currentOverBalls.length > 0) {
+                e.preventDefault();
+                e.returnValue = 'You have unsaved innings data. Are you sure you want to leave?';
+                return e.returnValue;
+            }
+        });
+        
         function getCurrentWickets() { if(currentInningsIndex===-1) return 0; let w=0; inningsList[currentInningsIndex].oversData.forEach(o=>o.forEach(b=>{if(b.includes('wicket')) w++;})); currentOverBalls.forEach(b=>{if(b.includes('wicket')) w++;}); return w; }
         function getOversString() { if(currentInningsIndex===-1) return '0.0'; let c=inningsList[currentInningsIndex]?.oversData?.length||0; return `${c}.${currentBallCount}`; }
         function getRunRate() { let c=inningsList[currentInningsIndex]?.oversData?.length||0; let ov=c+currentBallCount/6; return ov===0?0:(totalRuns/ov).toFixed(1); }
         function saveCurrent() { if(currentInningsIndex!==-1) inningsList[currentInningsIndex].totalRuns=totalRuns; }
         function pushUndo() { if(currentInningsIndex===-1) return; let copy=inningsList[currentInningsIndex].oversData.map(o=>[...o]); undoStack.push({totalRuns,currentOverBalls:[...currentOverBalls],currentBallCount,oversData:copy,inningsIndex:currentInningsIndex}); if(undoStack.length>25) undoStack.shift(); }
         function undo() { if(undoStack.length===0){animate('⛔ no undo');return;} let p=undoStack.pop(); if(currentInningsIndex!==p.inningsIndex) return; totalRuns=p.totalRuns; currentOverBalls=p.currentOverBalls; currentBallCount=p.currentBallCount; inningsList[currentInningsIndex].oversData=p.oversData.map(o=>[...o]); saveCurrent(); refreshDisplay(); animate('↩️ undone'); }
-        function refreshDisplay() { document.getElementById('runsDisplay').innerText=totalRuns; document.getElementById('wicketsDisplay').innerText=getCurrentWickets(); document.getElementById('oversDisplay').innerText=getOversString(); document.getElementById('ballInOverDisplay').innerText=currentBallCount+(currentBallCount===1?' ball':' balls'); document.getElementById('runRateDisplay').innerText=getRunRate(); const c=document.getElementById('currentOverBalls'); c.innerHTML=''; if(currentInningsIndex===-1){c.innerHTML='<span class="ball-chip">⚡ start innings</span>';return;} if(currentOverBalls.length===0 && currentBallCount===0) c.innerHTML='<span class="ball-chip">ready</span>'; else currentOverBalls.forEach(ball=>{let ch=document.createElement('span');ch.className='ball-chip';ch.innerText=ball;c.appendChild(ch);}); }
+        function refreshDisplay() { 
+            document.getElementById('runsDisplay').innerText=totalRuns; 
+            document.getElementById('wicketsDisplay').innerText=getCurrentWickets(); 
+            document.getElementById('oversDisplay').innerText=getOversString(); 
+            document.getElementById('ballInOverDisplay').innerText=currentBallCount+(currentBallCount===1?' ball':' balls'); 
+            document.getElementById('runRateDisplay').innerText=getRunRate(); 
+            const c=document.getElementById('currentOverBalls'); 
+            c.innerHTML=''; 
+            if(currentInningsIndex===-1){c.innerHTML='<span class="ball-chip">⚡ start innings</span>';return;} 
+            if(currentOverBalls.length===0 && currentBallCount===0) c.innerHTML='<span class="ball-chip">ready</span>'; 
+            else currentOverBalls.forEach(ball=>{let ch=document.createElement('span');ch.className='ball-chip';ch.innerText=ball;c.appendChild(ch);}); 
+        }
         function animate(text){ let div=document.createElement('div');div.className='float-anim';div.innerText=text; document.getElementById('animationContainer').innerHTML=''; document.getElementById('animationContainer').appendChild(div); setTimeout(()=>{if(document.getElementById('animationContainer').firstChild===div) document.getElementById('animationContainer').innerHTML='';},550);}
         function startNewInnings(){ if(currentInningsIndex!==-1) saveCurrent(); inningsList.push({totalRuns:0,oversData:[]}); currentInningsIndex=inningsList.length-1; totalRuns=0; currentOverBalls=[]; currentBallCount=0; undoStack=[]; refreshDisplay(); animate('NEW INNINGS'); }
         function checkActive(){ if(currentInningsIndex===-1) startNewInnings(); }
@@ -691,7 +728,40 @@
         function handleWicket(){ showPopup('wicket',(r)=>{ checkActive(); pushUndo(); if(currentBallCount===6){ if(currentOverBalls.length) inningsList[currentInningsIndex].oversData.push([...currentOverBalls]); currentOverBalls=[]; currentBallCount=0; } totalRuns+=r; currentOverBalls.push(r?`wicket+${r}`:'wicket'); currentBallCount++; if(currentBallCount===6){ inningsList[currentInningsIndex].oversData.push([...currentOverBalls]); currentOverBalls=[]; currentBallCount=0; } saveCurrent(); refreshDisplay(); animate('🪓 WICKET'); }); }
         function handleWide(){ showPopup('wide',(ex)=>{ checkActive(); pushUndo(); if(currentBallCount===6){ if(currentOverBalls.length) inningsList[currentInningsIndex].oversData.push([...currentOverBalls]); currentOverBalls=[]; currentBallCount=0; } totalRuns+=ex; currentOverBalls.push(ex?`WD+${ex}`:'WD'); saveCurrent(); refreshDisplay(); animate('↗️ WIDE'); }); }
         function handleNoball(){ showPopup('noball',(ex)=>{ checkActive(); pushUndo(); if(currentBallCount===6){ if(currentOverBalls.length) inningsList[currentInningsIndex].oversData.push([...currentOverBalls]); currentOverBalls=[]; currentBallCount=0; } totalRuns+=ex; currentOverBalls.push(ex?`NB+${ex}`:'NB'); saveCurrent(); refreshDisplay(); animate('⚠️ NO BALL'); },[0,1,2,3,4,6]); }
-        function openScorecard(){ let modal=document.getElementById('scoreModal'); let listDiv=document.getElementById('inningsList'); listDiv.innerHTML=''; if(inningsList.length===0) listDiv.innerHTML='<div class="innings-card">no innings</div>'; else{ inningsList.forEach((inns,idx)=>{ let card=document.createElement('div'); card.className='innings-card'; card.innerHTML=`<div class="innings-header"><strong>INNINGS ${idx+1} · ${inns.totalRuns} runs</strong><button class="delete-innings" data-index="${idx}">🗑 delete</button></div><div id="overs-${idx}"></div>`; listDiv.appendChild(card); let oversDiv=document.getElementById(`overs-${idx}`); if(!inns.oversData.length) oversDiv.innerHTML='<div class="over-row">no overs bowled</div>'; else{ inns.oversData.forEach((over,oidx)=>{ let overRuns=over.reduce((s,b)=>{ if(b==='dot') return s; if(b.includes('WD')||b.includes('NB')){ let m=b.match(/\+(\d)/); return s+(m?parseInt(m[1]):0); } if(b.includes('wicket')){ let m=b.match(/\+(\d)/); return s+(m?parseInt(m[1]):0); } let n=parseInt(b); return s+(isNaN(n)?0:n); },0); let row=document.createElement('div'); row.className='over-row'; row.innerHTML=`<span class="over-label">OV${oidx+1}</span><span class="over-runs">${overRuns} runs</span>`; over.forEach((ball,bidx)=>{ let badge=document.createElement('span'); badge.className='ball-badge'; if(ball.includes('WD')||ball.includes('NB')) badge.classList.add('wide'); else if(ball.includes('wicket')) badge.classList.add('wicket'); else if(ball==='dot') badge.classList.add('dot'); badge.innerText=ball; badge.onclick=()=>{ showPopup('edit',(newVal)=>{ if(currentInningsIndex===idx) pushUndo(); inningsList[idx].oversData[oidx][bidx]=newVal; let nt=0; inningsList[idx].oversData.forEach(o=>{o.forEach(b=>{ if(b==='dot') return; if(b.includes('WD')||b.includes('NB')){ let m=b.match(/\+(\d)/); if(m) nt+=parseInt(m[1]); }else if(b.includes('wicket')){ let m=b.match(/\+(\d)/); if(m) nt+=parseInt(m[1]); }else{ let n=parseInt(b); if(!isNaN(n)) nt+=n; } }); }); inningsList[idx].totalRuns=nt; if(idx===currentInningsIndex) totalRuns=nt; saveCurrent(); refreshDisplay(); openScorecard(); animate('✏️ edited'); },['dot','1','2','3','4','6','WD','WD+1','NB','NB+1','NB+2','wicket','wicket+1']); }; row.appendChild(badge); }); oversDiv.appendChild(row); }); } }); document.querySelectorAll('.delete-innings').forEach(btn=>{ btn.addEventListener('click',(e)=>{ let idx=parseInt(btn.dataset.index); inningsList.splice(idx,1); if(inningsList.length===0){ currentInningsIndex=-1; totalRuns=0; currentOverBalls=[]; currentBallCount=0; }else{ if(currentInningsIndex>=idx) currentInningsIndex--; if(currentInningsIndex<0) currentInningsIndex=0; totalRuns=inningsList[currentInningsIndex]?.totalRuns||0; } undoStack=[]; refreshDisplay(); openScorecard(); }); }); } modal.style.display='flex'; }
+        function openScorecard(){ 
+            let modal=document.getElementById('scoreModal'); 
+            let listDiv=document.getElementById('inningsList'); 
+            listDiv.innerHTML=''; 
+            if(inningsList.length===0) listDiv.innerHTML='<div class="innings-card">no innings</div>'; 
+            else{ 
+                inningsList.forEach((inns,idx)=>{ 
+                    let card=document.createElement('div'); 
+                    card.className='innings-card'; 
+                    card.innerHTML=`<div class="innings-header"><strong>INNINGS ${idx+1} · ${inns.totalRuns} runs</strong><button class="delete-innings" data-index="${idx}">🗑 delete</button></div><div id="overs-${idx}"></div>`; 
+                    listDiv.appendChild(card); 
+                    let oversDiv=document.getElementById(`overs-${idx}`); 
+                    if(!inns.oversData.length) oversDiv.innerHTML='<div class="over-row">no overs bowled</div>'; 
+                    else{ 
+                        inns.oversData.forEach((over,oidx)=>{ 
+                            let overRuns=over.reduce((s,b)=>{ if(b==='dot') return s; if(b.includes('WD')||b.includes('NB')){ let m=b.match(/\+(\d)/); return s+(m?parseInt(m[1]):0); } if(b.includes('wicket')){ let m=b.match(/\+(\d)/); return s+(m?parseInt(m[1]):0); } let n=parseInt(b); return s+(isNaN(n)?0:n); },0); 
+                            let row=document.createElement('div'); row.className='over-row'; row.innerHTML=`<span class="over-label">OV${oidx+1}</span><span class="over-runs">${overRuns} runs</span>`; 
+                            over.forEach((ball,bidx)=>{ 
+                                let badge=document.createElement('span'); badge.className='ball-badge'; 
+                                if(ball.includes('WD')||ball.includes('NB')) badge.classList.add('wide'); 
+                                else if(ball.includes('wicket')) badge.classList.add('wicket'); 
+                                else if(ball==='dot') badge.classList.add('dot'); 
+                                badge.innerText=ball; 
+                                badge.onclick=()=>{ showPopup('edit',(newVal)=>{ if(currentInningsIndex===idx) pushUndo(); inningsList[idx].oversData[oidx][bidx]=newVal; let nt=0; inningsList[idx].oversData.forEach(o=>{o.forEach(b=>{ if(b==='dot') return; if(b.includes('WD')||b.includes('NB')){ let m=b.match(/\+(\d)/); if(m) nt+=parseInt(m[1]); }else if(b.includes('wicket')){ let m=b.match(/\+(\d)/); if(m) nt+=parseInt(m[1]); }else{ let n=parseInt(b); if(!isNaN(n)) nt+=n; } }); }); inningsList[idx].totalRuns=nt; if(idx===currentInningsIndex) totalRuns=nt; saveCurrent(); refreshDisplay(); openScorecard(); animate('✏️ edited'); },['dot','1','2','3','4','6','WD','WD+1','NB','NB+1','NB+2','wicket','wicket+1']); }; 
+                                row.appendChild(badge); 
+                            }); 
+                            oversDiv.appendChild(row); 
+                        }); 
+                    } 
+                }); 
+                document.querySelectorAll('.delete-innings').forEach(btn=>{ btn.addEventListener('click',(e)=>{ let idx=parseInt(btn.dataset.index); inningsList.splice(idx,1); if(inningsList.length===0){ currentInningsIndex=-1; totalRuns=0; currentOverBalls=[]; currentBallCount=0; }else{ if(currentInningsIndex>=idx) currentInningsIndex--; if(currentInningsIndex<0) currentInningsIndex=0; totalRuns=inningsList[currentInningsIndex]?.totalRuns||0; } undoStack=[]; refreshDisplay(); openScorecard(); }); }); 
+            } 
+            modal.style.display='flex'; 
+        }
         document.querySelectorAll('.action-btn').forEach(btn=>{ btn.addEventListener('click',()=>{ let a=btn.dataset.action; if(a==='1') handleRun(1); else if(a==='2') handleRun(2); else if(a==='3') handleRun(3); else if(a==='4') handleRun(4); else if(a==='6') handleRun(6); else if(a==='dot') handleDot(); else if(a==='wicket') handleWicket(); else if(a==='wide') handleWide(); else if(a==='noball') handleNoball(); }); });
         document.getElementById('undoBtn').addEventListener('click',undo);
         document.getElementById('resetBtn').addEventListener('click',startNewInnings);
@@ -700,7 +770,7 @@
         window.addEventListener('click',e=>{ if(e.target===document.getElementById('scoreModal')) document.getElementById('scoreModal').style.display='none'; if(e.target===document.getElementById('runPopup')) document.getElementById('runPopup').style.display='none'; });
         startNewInnings();
 
-        // ---------- DRS + MOVABLE FLOATING LIVE PREVIEW (mobile-optimized) ----------
+        // ---------- DRS + MOVABLE FLOATING LIVE PREVIEW ----------
         let mediaStream=null, mediaRecorder=null, recordedChunks=[], totalBufferDuration=0, isRecording=false;
         const MAX_BUFFER=300;
         const floatingPreviewDiv = document.getElementById('floatingPreview');
@@ -713,17 +783,12 @@
         async function startRecording(){
             if(isRecording){ showMsg("Already recording",false); return; }
             try{
-                // Try environment camera first, fallback to any camera
                 let constraints = { video: { facingMode: { exact: "environment" } }, audio: false };
-                try {
-                    mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-                } catch(e) {
-                    constraints = { video: true, audio: false };
-                    mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-                }
+                try { mediaStream = await navigator.mediaDevices.getUserMedia(constraints); } 
+                catch(e) { mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); }
                 previewVideo.srcObject = mediaStream;
                 floatingPreviewDiv.style.display = 'block';
-                await previewVideo.play().catch(e=>console.warn("autoplay error",e));
+                await previewVideo.play().catch(e=>console.warn("autoplay",e));
                 const mime = MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : 'video/webm';
                 mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime });
                 mediaRecorder.ondataavailable = (e) => { if(e.data.size) addChunk(e.data, 2.0); };
@@ -732,7 +797,7 @@
                 document.getElementById('drsStartBtn').disabled = true;
                 document.getElementById('drsStopBtn').disabled = false;
                 document.getElementById('drsStartBtn').classList.add('recording-active');
-                showMsg("🎥 Recording started - live preview (drag to move)", false);
+                showMsg("🎥 Recording started - drag preview", false);
             } catch(err){ showMsg("Camera error: "+err.message, true); }
         }
         function stopRecording(){
@@ -745,67 +810,22 @@
             document.getElementById('drsStartBtn').disabled = false;
             document.getElementById('drsStopBtn').disabled = true;
             document.getElementById('drsStartBtn').classList.remove('recording-active');
-            showMsg("Recording stopped - preview hidden", false);
+            showMsg("Recording stopped", false);
         }
         function showMsg(msg,isErr){ let d=document.createElement('div'); d.className='message'; d.innerText=msg; d.style.background=isErr?'#e67e22dd':'#2ecc71dd'; document.body.appendChild(d); setTimeout(()=>d.remove(),2500); }
         
-        // ---- Drag & Drop for floating preview (mouse + touch) ----
-        let isDragging = false;
-        let startX, startY, startLeft, startTop;
-        function onDragStart(e) {
-            e.preventDefault();
-            isDragging = true;
-            const rect = floatingPreviewDiv.getBoundingClientRect();
-            startLeft = rect.left;
-            startTop = rect.top;
-            if (e.touches) {
-                startX = e.touches[0].clientX;
-                startY = e.touches[0].clientY;
-            } else {
-                startX = e.clientX;
-                startY = e.clientY;
-            }
-            floatingPreviewDiv.style.cursor = 'grabbing';
-        }
-        function onDragMove(e) {
-            if (!isDragging) return;
-            e.preventDefault();
-            let clientX, clientY;
-            if (e.touches) {
-                clientX = e.touches[0].clientX;
-                clientY = e.touches[0].clientY;
-            } else {
-                clientX = e.clientX;
-                clientY = e.clientY;
-            }
-            let dx = clientX - startX;
-            let dy = clientY - startY;
-            let newLeft = startLeft + dx;
-            let newTop = startTop + dy;
-            const maxX = window.innerWidth - floatingPreviewDiv.offsetWidth;
-            const maxY = window.innerHeight - floatingPreviewDiv.offsetHeight;
-            newLeft = Math.min(Math.max(0, newLeft), maxX);
-            newTop = Math.min(Math.max(0, newTop), maxY);
-            floatingPreviewDiv.style.left = newLeft + 'px';
-            floatingPreviewDiv.style.top = newTop + 'px';
-            floatingPreviewDiv.style.right = 'auto';
-            floatingPreviewDiv.style.bottom = 'auto';
-        }
-        function onDragEnd() {
-            isDragging = false;
-            floatingPreviewDiv.style.cursor = 'grab';
-        }
+        // Drag & drop
+        let isDragging = false, startX, startY, startLeft, startTop;
+        function onDragStart(e) { e.preventDefault(); isDragging = true; const rect = floatingPreviewDiv.getBoundingClientRect(); startLeft = rect.left; startTop = rect.top; if (e.touches) { startX = e.touches[0].clientX; startY = e.touches[0].clientY; } else { startX = e.clientX; startY = e.clientY; } floatingPreviewDiv.style.cursor = 'grabbing'; }
+        function onDragMove(e) { if (!isDragging) return; e.preventDefault(); let clientX, clientY; if (e.touches) { clientX = e.touches[0].clientX; clientY = e.touches[0].clientY; } else { clientX = e.clientX; clientY = e.clientY; } let dx = clientX - startX; let dy = clientY - startY; let newLeft = startLeft + dx; let newTop = startTop + dy; const maxX = window.innerWidth - floatingPreviewDiv.offsetWidth; const maxY = window.innerHeight - floatingPreviewDiv.offsetHeight; newLeft = Math.min(Math.max(0, newLeft), maxX); newTop = Math.min(Math.max(0, newTop), maxY); floatingPreviewDiv.style.left = newLeft + 'px'; floatingPreviewDiv.style.top = newTop + 'px'; floatingPreviewDiv.style.right = 'auto'; floatingPreviewDiv.style.bottom = 'auto'; }
+        function onDragEnd() { isDragging = false; floatingPreviewDiv.style.cursor = 'grab'; }
         floatingPreviewDiv.addEventListener('mousedown', onDragStart);
         window.addEventListener('mousemove', onDragMove);
         window.addEventListener('mouseup', onDragEnd);
         floatingPreviewDiv.addEventListener('touchstart', onDragStart, {passive: false});
         window.addEventListener('touchmove', onDragMove, {passive: false});
         window.addEventListener('touchend', onDragEnd);
-        // initial position
-        floatingPreviewDiv.style.left = 'auto';
-        floatingPreviewDiv.style.right = '20px';
-        floatingPreviewDiv.style.bottom = '20px';
-        floatingPreviewDiv.style.top = 'auto';
+        floatingPreviewDiv.style.left = 'auto'; floatingPreviewDiv.style.right = '20px'; floatingPreviewDiv.style.bottom = '20px'; floatingPreviewDiv.style.top = 'auto';
         
         let replayZoom=1, replayPanX=0, replayPanY=0, replayVideo=null;
         function applyReplayTransform(){ if(replayVideo){ replayVideo.style.transform=`scale(${replayZoom}) translate(${replayPanX/replayZoom}px, ${replayPanY/replayZoom}px)`; document.getElementById('drsZoomPercent').innerText=`${Math.round(replayZoom*100)}%`; } }
