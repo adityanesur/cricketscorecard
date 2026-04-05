@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>Premier Gully · DRS Scorekeeper | Movable Live Preview + Replay</title>
-    <meta name="description" content="Premier Gully - Advanced gully cricket run counter with Undo, Edit, Innings History, plus DRS recording & movable live preview.">
+    <title>Premier Gully · DRS Scorekeeper | Target + Overs Limit</title>
+    <meta name="description" content="Advanced gully cricket scorecard with DRS, target chase, overs limit, undo, edit, innings history & movable live preview.">
     <style>
         * {
             margin: 0;
@@ -13,7 +13,6 @@
             font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
         }
 
-        /* Prevent page zoom on double-tap for all interactive elements */
         button, .premium-btn, .action-btn, .ctrl-icon, .frame-btn, .ball-badge, .delete-innings, .close-modal, .close-drs {
             touch-action: manipulation;
         }
@@ -24,7 +23,6 @@
             padding: clamp(0.75rem, 2.5vw, 2rem);
         }
 
-        /* Main Scoreboard Card */
         .scoreboard {
             max-width: 1400px;
             margin: 0 auto;
@@ -156,6 +154,72 @@
             font-size: 0.8rem;
         }
 
+        /* Match Settings Row - 2x2 grid always, even on mobile */
+        .match-settings {
+            background: #0d1a24cc;
+            border-radius: 28px;
+            padding: 0.8rem 1.2rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid #2f8fbb;
+        }
+        .settings-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.8rem;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+        .target-info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.8rem;
+        }
+        .info-card {
+            background: rgba(3, 22, 31, 0.7);
+            backdrop-filter: blur(4px);
+            border: 1px solid #3f80aa;
+            border-radius: 28px;
+            padding: 0.6rem 0.5rem;
+            text-align: center;
+            transition: all 0.2s;
+        }
+        .info-card .label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #7bc5ff;
+            margin-bottom: 0.2rem;
+        }
+        .info-card .value {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #ffe6a3;
+            word-break: break-word;
+        }
+        .info-card .sub {
+            font-size: 0.65rem;
+            color: #b3defa;
+            margin-top: 0.2rem;
+        }
+        /* Responsive scaling for very small screens – keep 2 columns but shrink */
+        @media (max-width: 480px) {
+            .target-info-grid {
+                gap: 0.5rem;
+            }
+            .info-card {
+                padding: 0.4rem 0.3rem;
+            }
+            .info-card .label {
+                font-size: 0.6rem;
+            }
+            .info-card .value {
+                font-size: 0.85rem;
+            }
+            .info-card .sub {
+                font-size: 0.55rem;
+            }
+        }
+
         /* Buttons Grid */
         .button-group {
             margin-bottom: 1.2rem;
@@ -209,7 +273,7 @@
             font-size: 0.85rem;
         }
 
-        /* Innings history styling - FIXED SCROLLING */
+        /* Innings history scrolling */
         .modal-card {
             max-height: 85vh;
             overflow-y: auto;
@@ -513,7 +577,7 @@
             z-index: 10000;
         }
 
-        /* Floating live preview - movable */
+        /* Floating live preview */
         .floating-preview {
             position: fixed;
             bottom: 20px;
@@ -573,7 +637,7 @@
     <div class="header-grid">
         <div class="title-section">
             <h1>🏏 PREMIER GULLY · DRS</h1>
-            <p>undo · edit · innings history · movable live preview while recording</p>
+            <p>undo · edit · innings history · target chase · overs limit</p>
         </div>
         <div class="visitor-counter">
             <span>👥</span>
@@ -608,6 +672,17 @@
                 <span class="score-label">RUN RATE</span>
                 <span class="rate-value" id="runRateDisplay">0.0</span>
             </div>
+        </div>
+    </div>
+
+    <!-- Match Settings: buttons + 2x2 info grid -->
+    <div class="match-settings">
+        <div class="settings-buttons">
+            <button class="premium-btn" id="setTargetBtn">🎯 SET TARGET</button>
+            <button class="premium-btn" id="setOversBtn">⏱️ SET OVERS</button>
+        </div>
+        <div id="targetInfoGrid" class="target-info-grid">
+            <!-- dynamic cards will be injected here -->
         </div>
     </div>
 
@@ -686,9 +761,76 @@
 
 <script>
     (function(){
-        // ---------- SCORECARD STATE (no persistent storage) ----------
+        // ---------- SCORECARD STATE ----------
         let inningsList = [], currentInningsIndex = -1, currentOverBalls = [], currentBallCount = 0, totalRuns = 0, undoStack = [];
+        
+        // ---------- TARGET & OVERS LIMIT ----------
+        let targetRuns = null;      // null = no target
+        let maxOvers = null;        // null = unlimited
 
+        function getCurrentOversDecimal() {
+            let completed = inningsList[currentInningsIndex]?.oversData?.length || 0;
+            return completed + (currentBallCount / 6);
+        }
+
+        // Helper to update the 2x2 grid of info cards
+        function updateTargetInfo() {
+            const gridContainer = document.getElementById('targetInfoGrid');
+            if (!gridContainer) return;
+            
+            // Default empty state
+            if (targetRuns === null && maxOvers === null) {
+                gridContainer.innerHTML = `
+                    <div class="info-card"><div class="label">🎯 TARGET</div><div class="value">—</div><div class="sub">Not set</div></div>
+                    <div class="info-card"><div class="label">⏱️ MAX OVERS</div><div class="value">—</div><div class="sub">Unlimited</div></div>
+                    <div class="info-card"><div class="label">📊 NEED</div><div class="value">—</div><div class="sub">—</div></div>
+                    <div class="info-card"><div class="label">⚡ REQ RR</div><div class="value">—</div><div class="sub">—</div></div>
+                `;
+                return;
+            }
+            
+            // Prepare values
+            let targetDisplay = targetRuns !== null ? targetRuns : '—';
+            let oversDisplay = maxOvers !== null ? maxOvers : '∞';
+            let needText = '—';
+            let reqRRText = '—';
+            
+            if (targetRuns !== null && currentInningsIndex !== -1) {
+                const runsToWin = targetRuns - totalRuns;
+                if (runsToWin <= 0) {
+                    needText = '🏆 ACHIEVED';
+                    reqRRText = '0.00';
+                } else {
+                    const oversDecimal = getCurrentOversDecimal();
+                    let ballsLeft = null;
+                    if (maxOvers !== null && maxOvers > 0) {
+                        const totalBalls = maxOvers * 6;
+                        const ballsBowled = Math.floor(oversDecimal * 6);
+                        ballsLeft = totalBalls - ballsBowled;
+                        if (ballsLeft < 0) ballsLeft = 0;
+                        needText = `${runsToWin} runs in ${Math.floor(ballsLeft/6)}.${ballsLeft%6} ov`;
+                        const reqRR = (runsToWin / (ballsLeft / 6)).toFixed(2);
+                        if (ballsLeft > 0 && !isNaN(reqRR)) reqRRText = reqRR;
+                        else reqRRText = '—';
+                    } else {
+                        needText = `${runsToWin} runs`;
+                        reqRRText = '—';
+                    }
+                }
+            } else if (targetRuns !== null) {
+                needText = `${targetRuns} runs target`;
+                reqRRText = '—';
+            }
+            
+            gridContainer.innerHTML = `
+                <div class="info-card"><div class="label">🎯 TARGET</div><div class="value">${targetDisplay}</div><div class="sub">${targetRuns !== null ? 'runs' : 'not set'}</div></div>
+                <div class="info-card"><div class="label">⏱️ MAX OVERS</div><div class="value">${oversDisplay}</div><div class="sub">${maxOvers !== null ? 'overs' : 'unlimited'}</div></div>
+                <div class="info-card"><div class="label">📊 NEED</div><div class="value">${needText}</div><div class="sub">${targetRuns !== null && totalRuns < targetRuns ? 'to win' : ''}</div></div>
+                <div class="info-card"><div class="label">⚡ REQ RR</div><div class="value">${reqRRText}</div><div class="sub">per over</div></div>
+            `;
+        }
+
+        // Override original functions to keep target info updated
         function getCurrentWickets() { 
             if(currentInningsIndex===-1) return 0; 
             let w=0; 
@@ -717,7 +859,7 @@
             undoStack.push({totalRuns,currentOverBalls:[...currentOverBalls],currentBallCount,oversData:copy,inningsIndex:currentInningsIndex}); 
             if(undoStack.length>25) undoStack.shift(); 
         }
-        function refreshDisplay() { 
+        function refreshDisplayBase() { 
             document.getElementById('runsDisplay').innerText=totalRuns; 
             document.getElementById('wicketsDisplay').innerText=getCurrentWickets(); 
             document.getElementById('oversDisplay').innerText=getOversString(); 
@@ -728,6 +870,10 @@
             if(currentInningsIndex===-1){c.innerHTML='<span class="ball-chip">⚡ start innings</span>';return;} 
             if(currentOverBalls.length===0 && currentBallCount===0) c.innerHTML='<span class="ball-chip">ready</span>'; 
             else currentOverBalls.forEach(ball=>{let ch=document.createElement('span');ch.className='ball-chip';ch.innerText=ball;c.appendChild(ch);}); 
+        }
+        function refreshDisplay() {
+            refreshDisplayBase();
+            updateTargetInfo();
         }
         function animate(text){ 
             let div=document.createElement('div');div.className='float-anim';div.innerText=text; 
@@ -746,8 +892,19 @@
             refreshDisplay(); animate('NEW INNINGS');
         }
         function checkActive(){ if(currentInningsIndex===-1) startNewInnings(false); }
+        
+        // Modified handleBall with overs limit check
         function handleBall(sym, runs=0, isDot=false, noInc=false){ 
-            checkActive(); pushUndo(); 
+            checkActive(); 
+            if (maxOvers !== null && maxOvers > 0) {
+                let currentOvers = getCurrentOversDecimal();
+                if (currentOvers >= maxOvers) {
+                    animate('⛔ Overs limit reached');
+                    showMsg("Overs limit reached! Cannot add more deliveries.", true);
+                    return;
+                }
+            }
+            pushUndo(); 
             if(currentBallCount===6){ 
                 if(currentOverBalls.length) inningsList[currentInningsIndex].oversData.push([...currentOverBalls]); 
                 currentOverBalls=[]; currentBallCount=0; 
@@ -904,14 +1061,50 @@
         document.getElementById('closeModalBtn').addEventListener('click',()=>document.getElementById('scoreModal').style.display='none');
         window.addEventListener('click',e=>{ if(e.target===document.getElementById('scoreModal')) document.getElementById('scoreModal').style.display='none'; if(e.target===document.getElementById('runPopup')) document.getElementById('runPopup').style.display='none'; });
         
-        // ---------- START FRESH (no saved data) ----------
+        // ---------- TARGET & OVERS LIMIT UI ----------
+        function promptForTarget() {
+            let val = prompt("Enter target runs (number):", targetRuns !== null ? targetRuns : "");
+            if (val !== null && val !== "") {
+                let num = parseInt(val);
+                if (!isNaN(num) && num >= 0) {
+                    targetRuns = num;
+                    showMsg(`Target set to ${targetRuns} runs`, false);
+                } else {
+                    showMsg("Invalid target", true);
+                }
+            } else {
+                targetRuns = null;
+                showMsg("Target cleared", false);
+            }
+            refreshDisplay();
+        }
+        function promptForOvers() {
+            let val = prompt("Enter max overs per innings (0 for unlimited):", maxOvers !== null ? maxOvers : "");
+            if (val !== null && val !== "") {
+                let num = parseInt(val);
+                if (!isNaN(num) && num >= 0) {
+                    maxOvers = num === 0 ? null : num;
+                    showMsg(maxOvers ? `Max overs set to ${maxOvers}` : "Overs limit removed", false);
+                } else {
+                    showMsg("Invalid overs limit", true);
+                }
+            } else {
+                maxOvers = null;
+                showMsg("Overs limit cleared", false);
+            }
+            refreshDisplay();
+        }
+        document.getElementById('setTargetBtn').addEventListener('click', promptForTarget);
+        document.getElementById('setOversBtn').addEventListener('click', promptForOvers);
+        
+        // ---------- START FRESH ----------
         startNewInnings(false);
         
         // ---------- REFRESH / LEAVE WARNING ----------
         window.addEventListener('beforeunload', (e) => {
             if (inningsList.length > 0 && (inningsList.some(inn => inn.totalRuns > 0 || inn.oversData.length > 0) || totalRuns > 0 || currentOverBalls.length > 0)) {
                 e.preventDefault();
-                e.returnValue = '⚠️ All match data will be lost if you leave or refresh. Are you sure you want to continue?';
+                e.returnValue = '⚠️ All match data will be lost if you leave or refresh. Are you sure?';
                 return e.returnValue;
             }
         });
